@@ -15,9 +15,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -std=c++11 -fno-rtti -fno-exceptions
 
 add_executable(${PROJECT_NAME}
   src/main.cpp
+  src/logPlus.cpp
   src/controller.cpp
   src/controllers/dualshock3_controller.cpp
   src/controllers/dualshock4_controller.cpp
+  src/controllers/raiju_2_ultimate_controller.cpp
   src/controllers/dualsense_controller.cpp
   src/controllers/xbox_one_controller.cpp
   src/controllers/xbox_one_controller_2016.cpp
@@ -25,6 +27,7 @@ add_executable(${PROJECT_NAME}
 )
 
 target_link_libraries(${PROJECT_NAME}
+  SceIofilemgrForDriver_stub
   SceBtForDriver_stub
   SceCtrlForDriver_stub
   SceKernelSuspendForDriver_stub

@@ -1,9 +1,12 @@
-#include <cmath>
-#include <cstring>
-#include <taihen.h>
-#include <psp2/motion.h>
-#include <psp2/touch.h>
-#include <psp2kern/bt.h>
+#define VITA_KERNEL
+#define VITASDK
+
+#include <cmath>         // C++标准库，用于数学。
+#include <cstring>       // C++标准库，用于字符串操作。
+#include <taihen.h>      // TaiHEN插件框架的头文件，提供了挂钩系统函数的功能。
+#include <psp2/motion.h> // PlayStation Vita的运动相关头文件。
+#include <psp2/touch.h>  // PlayStation Vita的触摸输入相关头文件。
+#include <psp2kern/bt.h> // 内核模式下的API，涉及蓝牙、控制器、线程管理等
 #include <psp2kern/ctrl.h>
 #include <psp2kern/kernel/modulemgr.h>
 #include <psp2kern/kernel/suspend.h>
@@ -11,80 +14,88 @@
 
 #include "controller.h"
 #include "mempool.h"
+#include "logPlus.h"
 
-#define MAX_CONTROLLERS 4
+#define MAX_CONTROLLERS 4 // 支持的最大控制器数量
 
-#define TOUCHSCREEN_WIDTH  1920
+#define TOUCHSCREEN_WIDTH 1920 // 触摸屏的分辨率
 #define TOUCHSCREEN_HEIGHT 1080
 
-#define FLAG_EXIT (1 << 0)
+#define FLAG_EXIT (1 << 0) // 用于退出线程的标志。
 
-#define AXIS_MOVED(axis) \
-    (abs((int8_t)(axis - 128)) > 20)
+#define AXIS_MOVED(axis) \  
+    (abs((int8_t)(axis - 128)) > 20) // 判断摇杆是否移动的宏。
 
 // Redefinition for C++; requires type to specify parameters
-#undef TAI_CONTINUE
-#define TAI_CONTINUE(type, hook, ...)                                       \
-({                                                                          \
-    _tai_hook_user *cur  = (_tai_hook_user*)(hook);                         \
-    _tai_hook_user *next = (_tai_hook_user*)cur->next;                      \
-    next ? ((type)next->func)(__VA_ARGS__) : ((type)cur->old)(__VA_ARGS__); \
-})
+#undef TAI_CONTINUE // 取消之前定义的宏
+// 重新定义宏
+#define TAI_CONTINUE(type, hook, ...)                                           \
+    ({                                                                          \
+        _tai_hook_user *cur = (_tai_hook_user *)(hook);                         \
+        _tai_hook_user *next = (_tai_hook_user *)cur->next;                     \
+        next ? ((type)next->func)(__VA_ARGS__) : ((type)cur->old)(__VA_ARGS__); \
+    })
 
-#define DECL_FUNC_HOOK(name, ...)          \
-    static tai_hook_ref_t name##HookRef;   \
-    static SceUID name##HookUid = -1;      \
+#define DECL_FUNC_HOOK(name, ...)        \
+    static tai_hook_ref_t name##HookRef; \
+    static SceUID name##HookUid = -1;    \
     static int name##HookFunc(__VA_ARGS__)
 
 #define BIND_FUNC_OFFSET_HOOK(name, pid, modid, segidx, offset, thumb)    \
     name##HookUid = taiHookFunctionOffsetForKernel((pid), &name##HookRef, \
-        (modid), (segidx), (offset), thumb, (const void*)name##HookFunc)
+                                                   (modid), (segidx), (offset), thumb, (const void *)name##HookFunc)
 
 #define BIND_FUNC_EXPORT_HOOK(name, pid, module, lib_nid, func_nid)       \
     name##HookUid = taiHookFunctionExportForKernel((pid), &name##HookRef, \
-        (module), (lib_nid), (func_nid), (const void*)name##HookFunc)
+                                                   (module), (lib_nid), (func_nid), (const void *)name##HookFunc)
 
-#define UNBIND_FUNC_HOOK(name)                                 \
-({                                                             \
-    if (name##HookUid > 0)                                     \
-        taiHookReleaseForKernel(name##HookUid, name##HookRef); \
-})
+#define UNBIND_FUNC_HOOK(name)                                     \
+    ({                                                             \
+        if (name##HookUid > 0)                                     \
+            taiHookReleaseForKernel(name##HookUid, name##HookRef); \
+    })
 
-SceUID Mempool::uid = -1;
+SceUID Mempool::uid = -1; // 内存池的标识符
 static SceUID eventFlagUid = -1;
 static SceUID threadUid = -1;
 
-static Controller *controllers[MAX_CONTROLLERS] = {};
+static Controller *controllers[MAX_CONTROLLERS] = {}; // 用于存储控制器实例。
 
+// 用于限制值在指定范围内。
 static inline int clamp(int value, int min, int max)
 {
-    if (value <= min) return min;
-    if (value >= max) return max;
+    if (value <= min)
+        return min;
+    if (value >= max)
+        return max;
     return value;
 }
 
+// 将触摸坐标缩放到Vita的屏幕尺寸。
 static inline int scaleTouchCoord(int coord, int size, int dead, int vitaSize)
 {
     return clamp(((coord - dead) * vitaSize) / (size - dead * 2), 0, vitaSize - 1);
 }
 
+// 挂钩蓝牙函数，修改设备的配对行为。
 DECL_FUNC_HOOK(sceBt0x22999C8, void *ptr0, void *ptr1)
 {
-    uint32_t flags = *(uint32_t*)((uint32_t)ptr1 + 4);
+    uint32_t flags = *(uint32_t *)((uint32_t)ptr1 + 4);
 
     if (ptr0 && !(flags & 0x2))
     {
         // Set some bits to allow pairing unsupported devices
-        uint32_t *data = (uint32_t*)(*(uint32_t*)ptr0 + 8);
+        uint32_t *data = (uint32_t *)(*(uint32_t *)ptr0 + 8);
         *data |= 0x11000;
     }
 
-    return TAI_CONTINUE(int(*)(void*, void*), sceBt0x22999C8HookRef, ptr0, ptr1);
+    return TAI_CONTINUE(int (*)(void *, void *), sceBt0x22999C8HookRef, ptr0, ptr1);
 }
 
+// 挂钩控制器端口信息和电池信息的函数，模拟DualShock 4控制器。
 DECL_FUNC_HOOK(ksceCtrlGetControllerPortInfo, SceCtrlPortInfo *info)
 {
-    int ret = TAI_CONTINUE(int(*)(SceCtrlPortInfo*), ksceCtrlGetControllerPortInfoHookRef, info);
+    int ret = TAI_CONTINUE(int (*)(SceCtrlPortInfo *), ksceCtrlGetControllerPortInfoHookRef, info);
 
     if (ret >= 0)
     {
@@ -105,22 +116,26 @@ DECL_FUNC_HOOK(sceCtrlGetBatteryInfo, int port, uint8_t *batt)
     {
         // Override the battery level for connected controllers
         uint8_t data;
-        ksceKernelMemcpyUserToKernel(&data, (void*)batt, sizeof(uint8_t));
+        ksceKernelMemcpyUserToKernel(&data, (void *)batt, sizeof(uint8_t));
         data = controllers[port - 1]->getBatteryLevel();
-        ksceKernelMemcpyKernelToUser((void*)batt, &data, sizeof(uint8_t));
+        ksceKernelMemcpyKernelToUser((void *)batt, &data, sizeof(uint8_t));
         return 0;
     }
 
-    return TAI_CONTINUE(int(*)(int, uint8_t*), sceCtrlGetBatteryInfoHookRef, port, batt);
+    return TAI_CONTINUE(int (*)(int, uint8_t *), sceCtrlGetBatteryInfoHookRef, port, batt);
 }
 
 static void patchControlData(int port, SceCtrlData *data, int count, bool negative)
 {
     // Use controller 1 data for port 0, or controllers 1-4 for ports 1-4
     int cont = (port > 0) ? (port - 1) : 0;
-    if (!controllers[cont]) return;
-    const ControlData *controlData = controllers[cont]->getControlData();
 
+    if (!controllers[cont])
+    {
+        return;
+    }
+
+    const ControlData *controlData = controllers[cont]->getControlData();
     // Forward PS button presses to the kernel so the system menu receives them
     if (controlData->buttons & SCE_CTRL_PSBUTTON)
         ksceCtrlSetButtonEmulation(port, 0, 0, SCE_CTRL_PSBUTTON, 16);
@@ -137,45 +152,50 @@ static void patchControlData(int port, SceCtrlData *data, int count, bool negati
         // Set the button data from the controller, with optional negative logic
         // TODO: properly handle extended/analog triggers
         if (negative)
+        {
             data[i].buttons &= ~controlData->buttons;
+        }
         else
+        {
             data[i].buttons |= controlData->buttons;
+        }
 
         // Set the stick data from the controller
-        data[i].lx = clamp(data[i].lx + controlData->leftX  - 127, 0, 255);
-        data[i].ly = clamp(data[i].ly + controlData->leftY  - 127, 0, 255);
+        data[i].lx = clamp(data[i].lx + controlData->leftX - 127, 0, 255);
+        data[i].ly = clamp(data[i].ly + controlData->leftY - 127, 0, 255);
         data[i].rx = clamp(data[i].rx + controlData->rightX - 127, 0, 255);
         data[i].ry = clamp(data[i].ry + controlData->rightY - 127, 0, 255);
     }
 }
 
-#define DECL_FUNC_HOOK_CTRL(name, negative)                                                       \
-    DECL_FUNC_HOOK(name, int port, SceCtrlData *data, int count)                                  \
-    {                                                                                             \
-        int ret = TAI_CONTINUE(int(*)(int, SceCtrlData*, int), name##HookRef, port, data, count); \
-        if (ret >= 0)                                                                             \
-            patchControlData(port, data, count, (negative));                                      \
-        return ret;                                                                               \
+#define DECL_FUNC_HOOK_CTRL(name, negative)                                                         \
+    DECL_FUNC_HOOK(name, int port, SceCtrlData *data, int count)                                    \
+    {                                                                                               \
+        int ret = TAI_CONTINUE(int (*)(int, SceCtrlData *, int), name##HookRef, port, data, count); \
+        if (ret >= 0)                                                                               \
+            patchControlData(port, data, count, (negative));                                        \
+        return ret;                                                                                 \
     }
 
-DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositive,     false)
-DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositive,     false)
-DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferNegative,     true)
-DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferNegative,     true)
-DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositiveExt,  false)
-DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositiveExt,  false)
+DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositive, false)
+DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositive, false)
+DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferNegative, true)
+DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferNegative, true)
+DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositiveExt, false)
+DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositiveExt, false)
 
-DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositive2,    false)
-DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositive2,    false)
-DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferNegative2,    true)
-DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferNegative2,    true)
+DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositive2, false)
+DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositive2, false)
+DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferNegative2, true)
+DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferNegative2, true)
 DECL_FUNC_HOOK_CTRL(ksceCtrlPeekBufferPositiveExt2, false)
 DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositiveExt2, false)
 
 static void patchTouchData(int port, SceTouchData *data, int count)
 {
     // Use controller 1 data for the front touch port
-    if (port != SCE_TOUCH_PORT_FRONT || !controllers[0]) return;
+    if (port != SCE_TOUCH_PORT_FRONT || !controllers[0])
+        return;
     const TouchData *touchData = controllers[0]->getTouchData();
 
     for (int i = 0; i < count; i++)
@@ -185,9 +205,10 @@ static void patchTouchData(int port, SceTouchData *data, int count)
         // Add touches from the controller if present
         for (int j = 0; j < 2; j++)
         {
-            if (!touchData->touchActive[j]) continue;
+            if (!touchData->touchActive[j])
+                continue;
             data[i].report[reportNum].id = touchData->touchId[j];
-            data[i].report[reportNum].x = scaleTouchCoord(touchData->touchX[j], touchData->touchWidth,  touchData->touchDeadX, TOUCHSCREEN_WIDTH);
+            data[i].report[reportNum].x = scaleTouchCoord(touchData->touchX[j], touchData->touchWidth, touchData->touchDeadX, TOUCHSCREEN_WIDTH);
             data[i].report[reportNum].y = scaleTouchCoord(touchData->touchY[j], touchData->touchHeight, touchData->touchDeadY, TOUCHSCREEN_HEIGHT);
             reportNum++;
         }
@@ -199,13 +220,13 @@ static void patchTouchData(int port, SceTouchData *data, int count)
     }
 }
 
-#define DECL_FUNC_HOOK_TOUCH(name)                                                                              \
-    DECL_FUNC_HOOK(name, int port, SceTouchData *data, int count, int region)                                   \
-    {                                                                                                           \
-        int ret = TAI_CONTINUE(int(*)(int, SceTouchData*, int, int), name##HookRef, port, data, count, region); \
-        if (ret >= 0)                                                                                           \
-            patchTouchData(port, data, count);                                                                  \
-        return ret;                                                                                             \
+#define DECL_FUNC_HOOK_TOUCH(name)                                                                                \
+    DECL_FUNC_HOOK(name, int port, SceTouchData *data, int count, int region)                                     \
+    {                                                                                                             \
+        int ret = TAI_CONTINUE(int (*)(int, SceTouchData *, int, int), name##HookRef, port, data, count, region); \
+        if (ret >= 0)                                                                                             \
+            patchTouchData(port, data, count);                                                                    \
+        return ret;                                                                                               \
     }
 
 DECL_FUNC_HOOK_TOUCH(ksceTouchPeek)
@@ -215,7 +236,7 @@ DECL_FUNC_HOOK_TOUCH(ksceTouchReadRegion)
 
 DECL_FUNC_HOOK(sceMotionGetState, SceMotionState *state)
 {
-    int ret = TAI_CONTINUE(int(*)(SceMotionState*), sceMotionGetStateHookRef, state);
+    int ret = TAI_CONTINUE(int (*)(SceMotionState *), sceMotionGetStateHookRef, state);
 
     if (ret >= 0 && controllers[0])
     {
@@ -224,19 +245,20 @@ DECL_FUNC_HOOK(sceMotionGetState, SceMotionState *state)
 
         // Set the acceleration and velocity from the controller
         SceMotionState data;
-        ksceKernelMemcpyUserToKernel(&data, (void*)state, sizeof(SceMotionState));
-        data.acceleration.x    = motionState->accelerX;
-        data.acceleration.y    = motionState->accelerY;
-        data.acceleration.z    = motionState->accelerZ;
+        ksceKernelMemcpyUserToKernel(&data, (void *)state, sizeof(SceMotionState));
+        data.acceleration.x = motionState->accelerX;
+        data.acceleration.y = motionState->accelerY;
+        data.acceleration.z = motionState->accelerZ;
         data.angularVelocity.x = motionState->velocityX;
         data.angularVelocity.y = motionState->velocityY;
         data.angularVelocity.z = motionState->velocityZ;
-        ksceKernelMemcpyKernelToUser((void*)state, &data, sizeof(SceMotionState));
+        ksceKernelMemcpyKernelToUser((void *)state, &data, sizeof(SceMotionState));
     }
 
     return ret;
 }
 
+// 处理蓝牙事件，如控制器连接和断开。
 static int bluetoothCallback(int notifyId, int notifyCount, int notifyArg, void *common)
 {
     static uint8_t buffer[0x100];
@@ -245,10 +267,19 @@ static int bluetoothCallback(int notifyId, int notifyCount, int notifyArg, void 
 
     // Read a bluetooth event, or multiple to take care of overflow
     int ret;
-    while ((ret = ksceBtReadEvent(&event, 1)) == SCE_BT_ERROR_CB_OVERFLOW);
-    if (ret <= 0) return 0;
+    while ((ret = ksceBtReadEvent(&event, 1)) == SCE_BT_ERROR_CB_OVERFLOW)
+        ;
+
+    if (ret <= 0)
+    {
+        return 0;
+    }
 
     int cont = -1;
+    // LOG("bluetooth mac0: %x\n", event.mac0);
+    // LOG("bluetooth mac1: %x\n", event.mac1);
+    // LOG("vid: %x\n", pidvid[0]);
+    // LOG("pid: %x\n", pidvid[1]);
 
     // Search connected controllers for the device that triggered the event
     for (int i = 0; i < MAX_CONTROLLERS; i++)
@@ -273,54 +304,61 @@ static int bluetoothCallback(int notifyId, int notifyCount, int notifyArg, void 
         }
 
         if (cont == -1)
+        {
             return 0;
+        }
     }
 
     // Handle the bluetooth event
     switch (event.id)
     {
-        case 0x05: // Connection accepted
-            // Try to create a controller instance for the device
-            if (!controllers[cont])
-                controllers[cont] = Controller::makeController(event.mac0, event.mac1, cont);
-            break;
+    case 0x05: // Connection accepted
+        // Try to create a controller instance for the device
+        if (!controllers[cont])
+        {
+            controllers[cont] = Controller::makeController(event.mac0, event.mac1, cont);
+        }
+        break;
 
-        case 0x06: // Connection terminated
-            // Remove the controller instance for the device
-            if (controllers[cont])
-            {
-                Mempool::free(controllers[cont]);
-                controllers[cont] = nullptr;
-            }
-            break;
+    case 0x06: // Connection terminated
+        // Remove the controller instance for the device
+        if (controllers[cont])
+        {
+            Mempool::free(controllers[cont]);
+            controllers[cont] = nullptr;
+        }
+        break;
 
-        case 0x0A: // Reply to read request
-            if (controllers[cont])
-            {
-                // Process the received input report and request another
-                controllers[cont]->processReport(buffer, sizeof(buffer));
-                controllers[cont]->requestReport(HID_REQUEST_READ, buffer, sizeof(buffer));
+    case 0x0A: // Reply to read request
+        if (controllers[cont])
+        {
+            // Process the received input report and request another
+            controllers[cont]->processReport(buffer, sizeof(buffer));
+            controllers[cont]->requestReport(HID_REQUEST_READ, buffer, sizeof(buffer));
 
-                // Keep the screen awake when inputs are pressed
-                const ControlData *c = controllers[cont]->getControlData();
-                const TouchData *t = controllers[cont]->getTouchData();
-                if (c->buttons || t->touchActive[0] || t->touchActive[1] || AXIS_MOVED(c->leftX) ||
-                    AXIS_MOVED(c->leftY) || AXIS_MOVED(c->rightX) || AXIS_MOVED(c->rightY))
-                    ksceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
-            }
-            break;
+            // Keep the screen awake when inputs are pressed
+            const ControlData *c = controllers[cont]->getControlData();
+            const TouchData *t = controllers[cont]->getTouchData();
+            if (c->buttons || t->touchActive[0] || t->touchActive[1] || AXIS_MOVED(c->leftX) ||
+                AXIS_MOVED(c->leftY) || AXIS_MOVED(c->rightX) || AXIS_MOVED(c->rightY))
+                ksceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
+        }
+        break;
 
-        case 0x0B: // Reply to write request
-        case 0x0C: // Reply to feature request
-            // Request an initial input report (write/feature requests are typically part of controller init)
-            if (controllers[cont])
-                controllers[cont]->requestReport(HID_REQUEST_READ, buffer, sizeof(buffer));
-            break;
+    case 0x0B: // Reply to write request
+    case 0x0C: // Reply to feature request
+        // Request an initial input report (write/feature requests are typically part of controller init)
+        if (controllers[cont])
+        {
+            controllers[cont]->requestReport(HID_REQUEST_READ, buffer, sizeof(buffer));
+        }
+        break;
     }
 
     return 0;
 }
 
+// 运行蓝牙回调的线程，保持对蓝牙事件的监听。
 static int callbackThread(SceSize args, void *argp)
 {
     // Set up a callback to handle bluetooth events
@@ -346,131 +384,146 @@ static int callbackThread(SceSize args, void *argp)
 extern "C"
 {
 
-int moduleStart(SceSize args, void *argp)
-{
-    tai_module_info_t modInfo;
-    modInfo.size = sizeof(tai_module_info_t);
-
-    if (taiGetModuleInfoForKernel(KERNEL_PID, "SceBt", &modInfo) < 0)
-        return SCE_KERNEL_START_FAILED;
-
-    // Hook bluetooth functions
-    BIND_FUNC_OFFSET_HOOK(sceBt0x22999C8, KERNEL_PID, modInfo.modid, 0, 0x22999C8 - 0x2280000, 1);
-
-    // Hook controller info functions
-    BIND_FUNC_EXPORT_HOOK(ksceCtrlGetControllerPortInfo, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0xF11D0D30);
-    BIND_FUNC_EXPORT_HOOK(sceCtrlGetBatteryInfo,         KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x8F9B1CE5);
-
-    if (taiGetModuleInfoForKernel(KERNEL_PID, "SceCtrl", &modInfo) < 0)
-        return SCE_KERNEL_START_FAILED;
-
-    // Hook control data functions
-    BIND_FUNC_EXPORT_HOOK(ksceCtrlPeekBufferPositive, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0xEA1D3A34);
-    BIND_FUNC_EXPORT_HOOK(ksceCtrlReadBufferPositive, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x9B96A1AA);
-    BIND_FUNC_EXPORT_HOOK(ksceCtrlPeekBufferNegative, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x19895843);
-    BIND_FUNC_EXPORT_HOOK(ksceCtrlReadBufferNegative, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x8D4E0DD1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferPositiveExt,  KERNEL_PID, modInfo.modid, 0, 0x3928 | 1, 1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferPositiveExt,  KERNEL_PID, modInfo.modid, 0, 0x3BCC | 1, 1);
-
-    // Hook extended control data functions
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferPositive2,    KERNEL_PID, modInfo.modid, 0, 0x3EF8 | 1, 1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferPositive2,    KERNEL_PID, modInfo.modid, 0, 0x449C | 1, 1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferNegative2,    KERNEL_PID, modInfo.modid, 0, 0x41C8 | 1, 1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferNegative2,    KERNEL_PID, modInfo.modid, 0, 0x47F0 | 1, 1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferPositiveExt2, KERNEL_PID, modInfo.modid, 0, 0x4B48 | 1, 1);
-    BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferPositiveExt2, KERNEL_PID, modInfo.modid, 0, 0x4E14 | 1, 1);
-
-    // Hook touch data functions
-    BIND_FUNC_EXPORT_HOOK(ksceTouchPeek,       KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0xBAD1960B);
-    BIND_FUNC_EXPORT_HOOK(ksceTouchPeekRegion, KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0x9B3F7207);
-    BIND_FUNC_EXPORT_HOOK(ksceTouchRead,       KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0x70C8AACE);
-    BIND_FUNC_EXPORT_HOOK(ksceTouchReadRegion, KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0x9A91F624);
-
-    // Hook motion state functions
-    BIND_FUNC_EXPORT_HOOK(sceMotionGetState, KERNEL_PID, "SceMotion", TAI_ANY_LIBRARY, 0xBDB32767);
-
-    Mempool::init();
-
-    // Prepare the event flag and callback thread
-    eventFlagUid = ksceKernelCreateEventFlag("vitacontrol_eventflag", 0, 0, nullptr);
-    threadUid = ksceKernelCreateThread("vitacontrol_thread", callbackThread, 0x3C, 0x1000, 0, 0x10000, 0);
-    ksceKernelStartThread(threadUid, 0, nullptr);
-
-    return SCE_KERNEL_START_SUCCESS;
-}
-
-int moduleStop(SceSize args, void *argp)
-{
-    // Set the exit flag to stop the callback thread
-    if (eventFlagUid > 0)
-        ksceKernelSetEventFlag(eventFlagUid, FLAG_EXIT);
-
-    // Wait for the callback thread to stop and clean it up
-    if (threadUid > 0)
+    // 插件启动时执行的函数，设置挂钩并启动线程。
+    int moduleStart(SceSize args, void *argp)
     {
-        ksceKernelWaitThreadEnd(threadUid, nullptr, nullptr);
-        ksceKernelDeleteThread(threadUid);
-        threadUid = -1;
-    }
+        tai_module_info_t modInfo;
+        modInfo.size = sizeof(tai_module_info_t);
 
-    // Clean up the event flag
-    if (eventFlagUid > 0)
-    {
-        ksceKernelDeleteEventFlag(eventFlagUid);
-        eventFlagUid = -1;
-    }
+        // my code start
+        log_start();
+        LOG("Raiju2Ultimate by axel\n");
 
-    // Disconnect and clean up controllers
-    for (int i = 0; i < MAX_CONTROLLERS; i++)
-    {
-        if (controllers[i])
+        // my code end
+
+        if (taiGetModuleInfoForKernel(KERNEL_PID, "SceBt", &modInfo) < 0)
         {
-            ksceBtStartDisconnect(controllers[i]->getMac0(), controllers[i]->getMac1());
-            Mempool::free(controllers[i]);
-            controllers[i] = nullptr;
+            return SCE_KERNEL_START_FAILED;
         }
+
+        // Hook bluetooth functions
+        BIND_FUNC_OFFSET_HOOK(sceBt0x22999C8, KERNEL_PID, modInfo.modid, 0, 0x22999C8 - 0x2280000, 1);
+
+        // Hook controller info functions
+        BIND_FUNC_EXPORT_HOOK(ksceCtrlGetControllerPortInfo, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0xF11D0D30);
+
+        // Hook battery functions
+        BIND_FUNC_EXPORT_HOOK(sceCtrlGetBatteryInfo, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x8F9B1CE5);
+
+        if (taiGetModuleInfoForKernel(KERNEL_PID, "SceCtrl", &modInfo) < 0)
+        {
+            return SCE_KERNEL_START_FAILED;
+        }
+
+        // Hook control data functions
+        BIND_FUNC_EXPORT_HOOK(ksceCtrlPeekBufferPositive, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0xEA1D3A34);
+        BIND_FUNC_EXPORT_HOOK(ksceCtrlReadBufferPositive, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x9B96A1AA);
+        BIND_FUNC_EXPORT_HOOK(ksceCtrlPeekBufferNegative, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x19895843);
+        BIND_FUNC_EXPORT_HOOK(ksceCtrlReadBufferNegative, KERNEL_PID, "SceCtrl", TAI_ANY_LIBRARY, 0x8D4E0DD1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferPositiveExt, KERNEL_PID, modInfo.modid, 0, 0x3928 | 1, 1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferPositiveExt, KERNEL_PID, modInfo.modid, 0, 0x3BCC | 1, 1);
+
+        // Hook extended control data functions
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferPositive2, KERNEL_PID, modInfo.modid, 0, 0x3EF8 | 1, 1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferPositive2, KERNEL_PID, modInfo.modid, 0, 0x449C | 1, 1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferNegative2, KERNEL_PID, modInfo.modid, 0, 0x41C8 | 1, 1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferNegative2, KERNEL_PID, modInfo.modid, 0, 0x47F0 | 1, 1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlPeekBufferPositiveExt2, KERNEL_PID, modInfo.modid, 0, 0x4B48 | 1, 1);
+        BIND_FUNC_OFFSET_HOOK(ksceCtrlReadBufferPositiveExt2, KERNEL_PID, modInfo.modid, 0, 0x4E14 | 1, 1);
+
+        // Hook touch data functions
+        BIND_FUNC_EXPORT_HOOK(ksceTouchPeek, KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0xBAD1960B);
+        BIND_FUNC_EXPORT_HOOK(ksceTouchPeekRegion, KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0x9B3F7207);
+        BIND_FUNC_EXPORT_HOOK(ksceTouchRead, KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0x70C8AACE);
+        BIND_FUNC_EXPORT_HOOK(ksceTouchReadRegion, KERNEL_PID, "SceTouch", TAI_ANY_LIBRARY, 0x9A91F624);
+
+        // Hook motion state functions
+        BIND_FUNC_EXPORT_HOOK(sceMotionGetState, KERNEL_PID, "SceMotion", TAI_ANY_LIBRARY, 0xBDB32767);
+
+        Mempool::init();
+
+        // Prepare the event flag and callback thread
+        eventFlagUid = ksceKernelCreateEventFlag("vitacontrol_eventflag", 0, 0, nullptr);                      // 创建某个线程的标记位
+        threadUid = ksceKernelCreateThread("vitacontrol_thread", callbackThread, 0x3C, 0x1000, 0, 0x10000, 0); // 创建控制器线程
+        ksceKernelStartThread(threadUid, 0, nullptr);
+
+        return SCE_KERNEL_START_SUCCESS;
     }
 
-    Mempool::deinit();
+    // 插件停止时执行的函数，清理资源并停止线程。
+    int moduleStop(SceSize args, void *argp)
+    {
+        // Set the exit flag to stop the callback thread
+        if (eventFlagUid > 0)
+            ksceKernelSetEventFlag(eventFlagUid, FLAG_EXIT); // 设置某个线程的标记位
 
-    // Unhook bluetooth functions
-    UNBIND_FUNC_HOOK(sceBt0x22999C8);
+        // Wait for the callback thread to stop and clean it up
+        if (threadUid > 0)
+        {
+            ksceKernelWaitThreadEnd(threadUid, nullptr, nullptr);
+            ksceKernelDeleteThread(threadUid);
+            threadUid = -1;
+        }
 
-    // Unhook controller info functions
-    UNBIND_FUNC_HOOK(ksceCtrlGetControllerPortInfo);
-    UNBIND_FUNC_HOOK(sceCtrlGetBatteryInfo);
+        // Clean up the event flag
+        if (eventFlagUid > 0)
+        {
+            ksceKernelDeleteEventFlag(eventFlagUid);
+            eventFlagUid = -1;
+        }
 
-    // Unhook control data functions
-    UNBIND_FUNC_HOOK(ksceCtrlReadBufferNegative);
-    UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositive);
-    UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositive);
-    UNBIND_FUNC_HOOK(ksceCtrlPeekBufferNegative);
-    UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositiveExt);
-    UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositiveExt);
+        // Disconnect and clean up controllers
+        for (int i = 0; i < MAX_CONTROLLERS; i++)
+        {
+            if (controllers[i])
+            {
+                ksceBtStartDisconnect(controllers[i]->getMac0(), controllers[i]->getMac1());
+                Mempool::free(controllers[i]);
+                controllers[i] = nullptr;
+            }
+        }
 
-    // Unhook extended control data functions
-    UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositive2);
-    UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositive2);
-    UNBIND_FUNC_HOOK(ksceCtrlPeekBufferNegative2);
-    UNBIND_FUNC_HOOK(ksceCtrlReadBufferNegative2);
-    UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositiveExt2);
-    UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositiveExt2);
+        Mempool::deinit();
 
-    // Unhook touch data functions
-    UNBIND_FUNC_HOOK(ksceTouchPeek);
-    UNBIND_FUNC_HOOK(ksceTouchPeekRegion);
-    UNBIND_FUNC_HOOK(ksceTouchRead);
-    UNBIND_FUNC_HOOK(ksceTouchReadRegion);
+        // Unhook bluetooth functions
+        UNBIND_FUNC_HOOK(sceBt0x22999C8);
 
-    // Unhook motion state functions
-    UNBIND_FUNC_HOOK(sceMotionGetState);
+        // Unhook controller info functions
+        UNBIND_FUNC_HOOK(ksceCtrlGetControllerPortInfo);
+        UNBIND_FUNC_HOOK(sceCtrlGetBatteryInfo);
 
-    return SCE_KERNEL_STOP_SUCCESS;
-}
+        // Unhook control data functions
+        UNBIND_FUNC_HOOK(ksceCtrlReadBufferNegative);
+        UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositive);
+        UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositive);
+        UNBIND_FUNC_HOOK(ksceCtrlPeekBufferNegative);
+        UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositiveExt);
+        UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositiveExt);
 
-void _start()
-{
-    moduleStart(0, nullptr);
-}
+        // Unhook extended control data functions
+        UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositive2);
+        UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositive2);
+        UNBIND_FUNC_HOOK(ksceCtrlPeekBufferNegative2);
+        UNBIND_FUNC_HOOK(ksceCtrlReadBufferNegative2);
+        UNBIND_FUNC_HOOK(ksceCtrlPeekBufferPositiveExt2);
+        UNBIND_FUNC_HOOK(ksceCtrlReadBufferPositiveExt2);
 
+        // Unhook touch data functions
+        UNBIND_FUNC_HOOK(ksceTouchPeek);
+        UNBIND_FUNC_HOOK(ksceTouchPeekRegion);
+        UNBIND_FUNC_HOOK(ksceTouchRead);
+        UNBIND_FUNC_HOOK(ksceTouchReadRegion);
+
+        // Unhook motion state functions
+        UNBIND_FUNC_HOOK(sceMotionGetState);
+
+        // log_flush();  // my code 不会触发moduleStop事件
+
+        return SCE_KERNEL_STOP_SUCCESS;
+    }
+
+    void _start()
+    {
+        moduleStart(0, nullptr);
+    }
 }
