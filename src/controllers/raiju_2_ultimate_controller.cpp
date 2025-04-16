@@ -7,7 +7,7 @@
 Raiju2UltimateController::Raiju2UltimateController(uint32_t mac0, uint32_t mac1, int port) : Controller(mac0, mac1, port)
 {
     // my code start
-    LOG("Raiju2UltimateController\n");
+    // LOG("Raiju2UltimateController\n");
 
     static const uint8_t ledColours[][3] =
         {
@@ -51,17 +51,19 @@ static uint8_t buffer4Rajiu[0x100] = {0};
 void Raiju2UltimateController::processReport(uint8_t *buffer, size_t length)
 {
     // 比较两个数组是否相等，如果不相等，把参数buffer拷贝且打印出来
-    if (memcmp(buffer4Rajiu, buffer, sizeof(buffer4Rajiu)) != 0)
-    {
-        memcpy(buffer4Rajiu, buffer, sizeof(buffer4Rajiu));
+    // if (memcmp(buffer4Rajiu, buffer, sizeof(buffer4Rajiu)) != 0)
+    // {
+    //     memcpy(buffer4Rajiu, buffer, sizeof(buffer4Rajiu));
 
-        for (int i = 0; i < 8; i++)
-        {
-            LOG("%02X ", buffer4Rajiu[i]);
-        }
+    //     // LOG("%02X ", buffer4Rajiu[7]);
 
-        LOG("\n");
-    }
+    //     for (int i = 35; i < 43; i++)
+    //     {
+    //         LOG("%02X ", buffer4Rajiu[i]);
+    //     }
+
+    //     LOG("\n");
+    // }
 
     // Only process the report if it's of the right type
     if (buffer[0] != 0x01)
@@ -116,8 +118,8 @@ void Raiju2UltimateController::processReport(uint8_t *buffer, size_t length)
         controlData.buttons |= SCE_CTRL_PSBUTTON;
 
     // Map the extra buttons
-    if (report->tpad)
-        controlData.buttons |= SCE_CTRL_EXT1;
+    // if (report->tpad)
+    //     controlData.buttons |= SCE_CTRL_EXT1;
 
     // Map the sticks
     controlData.leftX = report->leftX;
@@ -125,15 +127,22 @@ void Raiju2UltimateController::processReport(uint8_t *buffer, size_t length)
     controlData.rightX = report->rightX;
     controlData.rightY = report->rightY;
 
-    // Map the touchscreen
-    touchData.touchActive[0] = !report->touch1ActiveNeg;
-    touchData.touchId[0] = report->touch1Id;
-    touchData.touchX[0] = report->touch1X;
-    touchData.touchY[0] = report->touch1Y;
-    touchData.touchActive[1] = !report->touch2ActiveNeg;
-    touchData.touchId[1] = report->touch2Id;
-    touchData.touchX[1] = report->touch2X;
-    touchData.touchY[1] = report->touch2Y;
+    if (report->tpad)
+    {
+        // tpad down => Map the rear touchpad
+        touchData.touchActive[1] = !report->touch2ActiveNeg;
+        touchData.touchId[1] = report->touch2Id;
+        touchData.touchX[1] = report->touch2X;
+        touchData.touchY[1] = report->touch2Y;
+    }
+    else
+    {
+        // Map the touchscreen
+        touchData.touchActive[0] = !report->touch1ActiveNeg;
+        touchData.touchId[0] = report->touch1Id;
+        touchData.touchX[0] = report->touch1X;
+        touchData.touchY[0] = report->touch1Y;
+    }
 
     // Map the motion controls
     motionState.accelerX = report->accelerX;

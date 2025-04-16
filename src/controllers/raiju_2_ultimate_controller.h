@@ -65,6 +65,9 @@ struct Raiju2UltimateReport0x01
     unsigned int touch2ActiveNeg : 1;
     unsigned int touch2X : 12;
     unsigned int touch2Y : 12;
+
+    unsigned int touch3Id : 8;
+    unsigned int touch4Id : 8;
 }
 __attribute__((packed));
 

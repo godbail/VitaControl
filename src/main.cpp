@@ -194,9 +194,24 @@ DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositiveExt2, false)
 static void patchTouchData(int port, SceTouchData *data, int count)
 {
     // Use controller 1 data for the front touch port
-    if (port != SCE_TOUCH_PORT_FRONT || !controllers[0])
+    if (!controllers[0])
         return;
-    const TouchData *touchData = controllers[0]->getTouchData();
+
+    LOG("count: %d\n", count);
+
+    const TouchData *touchData;
+
+    switch (port)
+    {
+    case SCE_TOUCH_PORT_FRONT:
+    case SCE_TOUCH_PORT_BACK:
+        LOG("front touchpad event \n");
+        LOG("back touchpad event \n");
+        touchData = controllers[0]->getTouchData();
+        break;
+    default:
+        return;
+    }
 
     for (int i = 0; i < count; i++)
     {
@@ -210,6 +225,21 @@ static void patchTouchData(int port, SceTouchData *data, int count)
             data[i].report[reportNum].id = touchData->touchId[j];
             data[i].report[reportNum].x = scaleTouchCoord(touchData->touchX[j], touchData->touchWidth, touchData->touchDeadX, TOUCHSCREEN_WIDTH);
             data[i].report[reportNum].y = scaleTouchCoord(touchData->touchY[j], touchData->touchHeight, touchData->touchDeadY, TOUCHSCREEN_HEIGHT);
+
+            // if (port == SCE_TOUCH_PORT_BACK)
+            // {
+            //     LOG("BACK-id: %02x\n", (uint8_t)data[i].report[reportNum].id);
+            //     LOG("BACK-x: %02x\n", (uint16_t)data[i].report[reportNum].x);
+            //     LOG("BACK-y: %02x\n", (uint16_t)data[i].report[reportNum].y);
+            // }
+
+            // if (port == SCE_TOUCH_PORT_FRONT)
+            // {
+            //     LOG("FRONT-id: %02x\n", (uint8_t)data[i].report[reportNum].id);
+            //     LOG("FRONT-x: %02x\n", (uint16_t)data[i].report[reportNum].x);
+            //     LOG("FRONT-y: %02x\n", (uint16_t)data[i].report[reportNum].y);
+            // }
+
             reportNum++;
         }
 
@@ -276,10 +306,9 @@ static int bluetoothCallback(int notifyId, int notifyCount, int notifyArg, void 
     }
 
     int cont = -1;
+
     // LOG("bluetooth mac0: %x\n", event.mac0);
     // LOG("bluetooth mac1: %x\n", event.mac1);
-    // LOG("vid: %x\n", pidvid[0]);
-    // LOG("pid: %x\n", pidvid[1]);
 
     // Search connected controllers for the device that triggered the event
     for (int i = 0; i < MAX_CONTROLLERS; i++)
@@ -392,7 +421,7 @@ extern "C"
 
         // my code start
         log_start();
-        LOG("Raiju2Ultimate by axel\n");
+        // LOG("Raiju2Ultimate by axel\n");
 
         // my code end
 

@@ -12,6 +12,7 @@
 static SceUID log_thid = -1;  // 线程句柄
 static SceUID log_mutex = -1; // 互斥锁句柄
 static SceUID log_fd = -1;    // 文件句柄
+static bool enabled = true;   // 是否启用日志线程
 
 static unsigned int log_buffer_ptr = 0;
 static int flag = 0;
@@ -20,6 +21,11 @@ static char log_buffer[16 * 1024];
 // ✍️ 全局可调用：格式化并写入日志文件
 void log_write(const char *buffer, size_t length)
 {
+    if (!enabled)
+    {
+        return;
+    }
+
 #ifndef RELEASE
     // 如果当前buffer有值的部分长度+新内容的长度，超过buffer的总长度，则返回
     if ((log_buffer_ptr + length) >= sizeof(log_buffer))
@@ -61,6 +67,11 @@ int log_thread(SceSize args, void *argp)
 
 void log_start()
 {
+    if (!enabled)
+    {
+        return;
+    }
+
     // 打开日志文件（不存在就创建），追加模式
     log_fd = ksceIoOpen(LOG_FILE,
                         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,

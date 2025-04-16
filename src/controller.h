@@ -24,21 +24,21 @@ enum DpadDirections
 enum BatteryStates
 {
     BATTERY_CHARGING = 0xEE,
-    BATTERY_CHARGED  = 0xEF,
-    BATTERY_FULL     = 0x05
+    BATTERY_CHARGED = 0xEF,
+    BATTERY_FULL = 0x05
 };
 
 enum SceCtrlButtonsExt
 {
     SCE_CTRL_EXT1 = 0x04000000,
-	SCE_CTRL_EXT2 = 0x08000000
+    SCE_CTRL_EXT2 = 0x08000000
 };
 
 struct ControlData
 {
     uint32_t buttons = 0;
-    uint8_t leftX  = 0;
-    uint8_t leftY  = 0;
+    uint8_t leftX = 0;
+    uint8_t leftY = 0;
     uint8_t rightX = 0;
     uint8_t rightY = 0;
 };
@@ -67,32 +67,34 @@ struct MotionState
 
 class Controller
 {
-    public:
-        Controller(uint32_t mac0, uint32_t mac1, int port): mac0(mac0), mac1(mac1) {}
+public:
+    Controller(uint32_t mac0, uint32_t mac1, int port) : mac0(mac0), mac1(mac1) {}
 
-        static Controller *makeController(uint32_t mac0, uint32_t mac1, int port);
+    static Controller *makeController(uint32_t mac0, uint32_t mac1, int port);
 
-        void requestReport(uint8_t type, uint8_t *buffer, size_t length);
-        virtual void processReport(uint8_t *buffer, size_t length) = 0;
+    void requestReport(uint8_t type, uint8_t *buffer, size_t length);
+    virtual void processReport(uint8_t *buffer, size_t length) = 0;
 
-        const ControlData *getControlData()  { return &controlData; }
-        const TouchData   *getTouchData()    { return &touchData;   }
-        const MotionState *getMotionState()  { return &motionState; }
-        uint8_t            getBatteryLevel() { return batteryLevel; }
+    const ControlData *getControlData() { return &controlData; }
+    const TouchData *getTouchData() { return &touchData; }
+    // const TouchData *getRearTouchData() { return &rearTouchData; }
+    const MotionState *getMotionState() { return &motionState; }
+    uint8_t getBatteryLevel() { return batteryLevel; }
 
-        uint32_t getMac0() { return mac0; }
-        uint32_t getMac1() { return mac1; }
+    uint32_t getMac0() { return mac0; }
+    uint32_t getMac1() { return mac1; }
 
-    protected:
-        ControlData controlData;
-        TouchData   touchData;
-        MotionState motionState;
-        uint8_t     batteryLevel = 0;
+protected:
+    ControlData controlData;
+    TouchData touchData;
+    // TouchData rearTouchData;
+    MotionState motionState;
+    uint8_t batteryLevel = 0;
 
-        static uint32_t calculateCrc(uint8_t *buffer, size_t length);
+    static uint32_t calculateCrc(uint8_t *buffer, size_t length);
 
-    private:
-        uint32_t mac0, mac1;
+private:
+    uint32_t mac0, mac1;
 };
 
 #endif // CONTROLLER_H
