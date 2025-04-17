@@ -79,6 +79,7 @@ public:
     const TouchData *getTouchData() { return &touchData; }
     // const TouchData *getRearTouchData() { return &rearTouchData; }
     const MotionState *getMotionState() { return &motionState; }
+    const bool tpadDown() { return (controlData.buttons & SCE_CTRL_EXT1) == SCE_CTRL_EXT1; }
     uint8_t getBatteryLevel() { return batteryLevel; }
 
     uint32_t getMac0() { return mac0; }

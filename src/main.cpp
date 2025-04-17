@@ -194,22 +194,13 @@ DECL_FUNC_HOOK_CTRL(ksceCtrlReadBufferPositiveExt2, false)
 static void patchTouchData(int port, SceTouchData *data, int count)
 {
     // Use controller 1 data for the front touch port
-    if (!controllers[0])
+    if ((port != SCE_TOUCH_PORT_FRONT && port != SCE_TOUCH_PORT_BACK) || !controllers[0])
         return;
 
-    LOG("count: %d\n", count);
+    const TouchData *touchData = controllers[0]->getTouchData();
 
-    const TouchData *touchData;
-
-    switch (port)
+    if (controllers[0]->tpadDown() != (bool)port)
     {
-    case SCE_TOUCH_PORT_FRONT:
-    case SCE_TOUCH_PORT_BACK:
-        LOG("front touchpad event \n");
-        LOG("back touchpad event \n");
-        touchData = controllers[0]->getTouchData();
-        break;
-    default:
         return;
     }
 
@@ -222,23 +213,10 @@ static void patchTouchData(int port, SceTouchData *data, int count)
         {
             if (!touchData->touchActive[j])
                 continue;
+            // LOG("port:%d\n", port);
             data[i].report[reportNum].id = touchData->touchId[j];
             data[i].report[reportNum].x = scaleTouchCoord(touchData->touchX[j], touchData->touchWidth, touchData->touchDeadX, TOUCHSCREEN_WIDTH);
             data[i].report[reportNum].y = scaleTouchCoord(touchData->touchY[j], touchData->touchHeight, touchData->touchDeadY, TOUCHSCREEN_HEIGHT);
-
-            // if (port == SCE_TOUCH_PORT_BACK)
-            // {
-            //     LOG("BACK-id: %02x\n", (uint8_t)data[i].report[reportNum].id);
-            //     LOG("BACK-x: %02x\n", (uint16_t)data[i].report[reportNum].x);
-            //     LOG("BACK-y: %02x\n", (uint16_t)data[i].report[reportNum].y);
-            // }
-
-            // if (port == SCE_TOUCH_PORT_FRONT)
-            // {
-            //     LOG("FRONT-id: %02x\n", (uint8_t)data[i].report[reportNum].id);
-            //     LOG("FRONT-x: %02x\n", (uint16_t)data[i].report[reportNum].x);
-            //     LOG("FRONT-y: %02x\n", (uint16_t)data[i].report[reportNum].y);
-            // }
 
             reportNum++;
         }
