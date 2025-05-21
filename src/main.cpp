@@ -213,7 +213,7 @@ static void patchTouchData(int port, SceTouchData *data, int count)
         {
             if (!touchData->touchActive[j])
                 continue;
-            // LOG("port:%d\n", port);
+            // LOG("width:%04x,height:%04x\n", touchData->touchX, touchData->touchY);
             data[i].report[reportNum].id = touchData->touchId[j];
             data[i].report[reportNum].x = scaleTouchCoord(touchData->touchX[j], touchData->touchWidth, touchData->touchDeadX, TOUCHSCREEN_WIDTH);
             data[i].report[reportNum].y = scaleTouchCoord(touchData->touchY[j], touchData->touchHeight, touchData->touchDeadY, TOUCHSCREEN_HEIGHT);

@@ -97,13 +97,13 @@ void Raiju2UltimateController::processReport(uint8_t *buffer, size_t length)
 
     // // Map the triggers
     if (report->l1)
-        controlData.buttons |= SCE_CTRL_L1;
-    if (report->r1)
-        controlData.buttons |= SCE_CTRL_R1;
-    if (report->l2)
         controlData.buttons |= SCE_CTRL_LTRIGGER;
-    if (report->r2)
+    if (report->r1)
         controlData.buttons |= SCE_CTRL_RTRIGGER;
+    if (report->l2)
+        controlData.buttons |= SCE_CTRL_L1;
+    if (report->r2)
+        controlData.buttons |= SCE_CTRL_R1;
     if (report->l3)
         controlData.buttons |= SCE_CTRL_L3;
     if (report->r3)
@@ -150,6 +150,7 @@ void Raiju2UltimateController::processReport(uint8_t *buffer, size_t length)
         touchData.touchX[1] = report->touch2X;
         touchData.touchY[1] = report->touch2Y;
     }
+
     // Map the motion controls
     motionState.accelerX = report->accelerX;
     motionState.accelerY = report->accelerY;

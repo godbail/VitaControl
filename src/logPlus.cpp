@@ -12,7 +12,7 @@
 static SceUID log_thid = -1;  // 线程句柄
 static SceUID log_mutex = -1; // 互斥锁句柄
 static SceUID log_fd = -1;    // 文件句柄
-static bool enabled = true;   // 是否启用日志线程
+static bool enabled = false;  // 是否启用日志线程
 
 static unsigned int log_buffer_ptr = 0;
 static int flag = 0;
